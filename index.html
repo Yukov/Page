@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Claim Virtuals TGE Token</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #f6f8fa;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+    }
+
+    .container {
+      background: white;
+      padding: 30px 40px;
+      border-radius: 16px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
+      max-width: 500px;
+      width: 100%;
+    }
+
+    h2 {
+      text-align: center;
+      margin-bottom: 24px;
+      color: #222;
+    }
+
+    label {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 16px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    input[type="text"] {
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      font-size: 14px;
+    }
+
+    button {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 8px;
+      background-color: #3b82f6;
+      color: white;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+    }
+
+    button:disabled {
+      background-color: #9ca3af;
+      cursor: not-allowed;
+    }
+
+    button:hover:not(:disabled) {
+      background-color: #2563eb;
+    }
+
+    .info {
+      margin: 10px 0;
+      font-size: 14px;
+    }
+
+    .info strong {
+      color: #111;
+    }
+
+    .status {
+      margin-top: 12px;
+      padding: 10px;
+      background: #f0f4f8;
+      border-radius: 8px;
+      font-size: 14px;
+      color: #333;
+      word-break: break-word;
+    }
+
+    .buttons {
+      display: flex;
+      gap: 10px;
+      justify-content: space-between;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Claim Virtuals TGE Token</h2>
+
+    <label>
+      Contract address:
+      <input type="text" id="contractInput" value="0x285B95Fe51B9B7c5a5Da729Ac80E7FD1e9b72C4D">
+    </label>
+
+    <div class="buttons">
+      <button id="loadBtn">Load Contract</button>
+      <button id="claimBtn" disabled>Claim Tokens</button>
+    </div>
+
+    <div class="info"><strong>Connected wallet:</strong> <span id="walletAddress">–</span></div>
+    <div class="status"><strong>Status:</strong> <span id="status">Initializing...</span></div>
+  </div>
+
+  <script>
+    const chainIdBase = "0x2105"; // Base Mainnet
+    const abi = [
+      {
+        "name": "claimAgentToken",
+        "type": "function",
+        "inputs":[{"name":"userAddress","type":"address"}],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      }
+    ];
+
+    const walletEl = document.getElementById("walletAddress");
+    const statusEl = document.getElementById("status");
+    const claimBtn = document.getElementById("claimBtn");
+    const contractInput = document.getElementById("contractInput");
+    const loadBtn = document.getElementById("loadBtn");
+
+    let provider, signer, userAddress, contract;
+    let checkerInterval = null;
+
+    async function switchToBase() {
+      try {
+        await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: chainIdBase }] });
+      } catch(err) {
+        if (err.code === 4902) {
+          await window.ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: chainIdBase,
+              chainName: 'Base',
+              rpcUrls: ['https://mainnet.base.org'],
+              nativeCurrency:{ name:'ETH', symbol:'ETH', decimals:18 },
+              blockExplorerUrls:['https://basescan.org']
+            }]
+          });
+        }
+      }
+    }
+
+    async function checkEligibility() {
+      if (!contract || !userAddress) return;
+
+      try {
+        claimBtn.disabled = true;
+        statusEl.textContent = "Checking…";
+        await contract.callStatic.claimAgentToken(userAddress);
+        statusEl.textContent = "✅ Tokens available to claim";
+        claimBtn.disabled = true;
+      } catch(err) {
+        statusEl.textContent = "⚠️ " + (err.reason || err.message);
+        claimBtn.disabled = true;
+      }
+    }
+
+    async function init() {
+      claimBtn.disabled = true;
+      statusEl.textContent = "Connecting wallet…";
+
+      if (!window.ethereum) {
+        alert("Please install MetaMask!");
+        return;
+      }
+
+      await switchToBase();
+      await window.ethereum.request({ method: 'eth_requestAccounts' });
+
+      provider = new window.ethers.providers.Web3Provider(window.ethereum);
+      signer = provider.getSigner();
+      userAddress = await signer.getAddress();
+      walletEl.textContent = userAddress;
+
+      const address = contractInput.value.trim();
+      if (!window.ethers.utils.isAddress(address)) {
+        statusEl.textContent = "❌ Invalid contract address";
+        return;
+      }
+
+      contract = new window.ethers.Contract(address, abi, signer);
+
+      await checkEligibility();
+
+      if (checkerInterval) clearInterval(checkerInterval);
+      checkerInterval = setInterval(checkEligibility, 5000);
+
+      claimBtn.onclick = async () => {
+        try {
+          statusEl.textContent = "📤 Sending transaction...";
+          const tx = await contract.claimAgentToken(userAddress);
+          statusEl.innerHTML = `✅ Tx sent: <a href="https://basescan.org/tx/${tx.hash}" target="_blank">${tx.hash}</a>`;
+          claimBtn.disabled = true;
+        } catch(err) {
+          console.error(err);
+          statusEl.textContent = "❌ Tx error: " + (err.reason || err.message);
+        }
+      };
+    }
+
+    window.addEventListener('load', init);
+    loadBtn.addEventListener('click', init);
+  </script>
+</body>
+</html>
